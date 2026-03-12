@@ -180,6 +180,9 @@ export const useChatStore = create<ChatState>()(
             if (cleaned.generatedDoc?.previewHtml) {
               cleaned.generatedDoc = { ...cleaned.generatedDoc, previewHtml: "" };
             }
+            if (cleaned.generatedVideo?.videoUrl) {
+              cleaned.generatedVideo = { ...cleaned.generatedVideo, videoUrl: undefined };
+            }
             return cleaned;
           }),
         })),

@@ -80,6 +80,12 @@ body {
 .animate-blink      { animation: blink 1s step-end infinite; }
 .animate-scale-in   { animation: scaleIn 0.3s cubic-bezier(.25,.46,.45,.94) forwards; }
 .animate-pulse-slow { animation: pulse 2s ease-in-out infinite; }
+.animate-progress-bar { animation: progressSlide 1.5s ease-in-out infinite; }
+
+@keyframes progressSlide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
 
 /* ── Code Blocks ── */
 pre {

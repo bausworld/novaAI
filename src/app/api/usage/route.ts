@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 
 const STABILITY_KEY = process.env.STABILITY_API_KEY || "";
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "";
-const OPENAI_KEY = process.env.OPENAI_API_KEY || "";
+const OPENAI_KEY = process.env.OPEN_API_KEY || "";
 const MAILERSEND_KEY = process.env.MAILERSEND_API_KEY || "";
+const VEO_KEY = process.env.VEO_API_KEY || "";
+const JIRA_SITE = process.env.JIRA_SITE_URL || "";
 
 export async function GET() {
   const services: Array<{
@@ -112,14 +114,46 @@ export async function GET() {
 
   // 3. OpenAI
   if (OPENAI_KEY) {
-    services.push({
-      name: "OpenAI",
-      type: "AI Chat",
-      status: "active",
-      cost: "Pay-per-token",
-      limit: "Based on billing plan",
-      note: "API key configured",
-    });
+    try {
+      const res = await fetch("https://api.openai.com/v1/models", {
+        headers: { Authorization: `Bearer ${OPENAI_KEY}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const modelCount = data.data?.length || 0;
+        const hasGpt4 = data.data?.some((m: { id: string }) => m.id.startsWith("gpt-4"));
+        const hasGpt5 = data.data?.some((m: { id: string }) => m.id.startsWith("gpt-5"));
+        const topModel = hasGpt5 ? "GPT-5" : hasGpt4 ? "GPT-4" : "GPT-3.5";
+        services.push({
+          name: "OpenAI",
+          type: "AI Chat",
+          status: "active",
+          cost: "Pay-per-token",
+          limit: "Based on billing plan",
+          remaining: `${modelCount} models available`,
+          note: `Up to ${topModel}. Check billing at platform.openai.com`,
+        });
+      } else {
+        services.push({
+          name: "OpenAI",
+          type: "AI Chat",
+          status: "error",
+          cost: "Pay-per-token",
+          limit: "N/A",
+          note: `API returned ${res.status} — check key`,
+        });
+      }
+    } catch {
+      services.push({
+        name: "OpenAI",
+        type: "AI Chat",
+        status: "error",
+        cost: "Pay-per-token",
+        limit: "N/A",
+        note: "Could not reach OpenAI",
+      });
+    }
   } else {
     services.push({
       name: "OpenAI",
@@ -127,7 +161,7 @@ export async function GET() {
       status: "error",
       cost: "Pay-per-token",
       limit: "N/A",
-      note: "No API key configured — add OPENAI_API_KEY to .env.local",
+      note: "No API key configured — add OPEN_API_KEY to .env.local",
     });
   }
 
@@ -203,6 +237,30 @@ export async function GET() {
       note: "Local generation — Word, Excel, PDF via docx/exceljs/pdfkit",
     }
   );
+
+  // 6. VEO Video Generation
+  if (VEO_KEY) {
+    services.push({
+      name: "Google VEO",
+      type: "Video Generation",
+      status: "active",
+      cost: "Pay-per-video",
+      limit: "Based on Google Cloud billing",
+      note: "AI video generation via Vertex AI",
+    });
+  }
+
+  // 7. Jira
+  if (JIRA_SITE) {
+    services.push({
+      name: "Jira Cloud",
+      type: "Project Management",
+      status: "active",
+      cost: "Free (included in Jira plan)",
+      limit: "Unlimited",
+      note: `Connected to ${JIRA_SITE.replace("https://", "")}`,
+    });
+  }
 
   return NextResponse.json({ services });
 }

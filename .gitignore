@@ -19,3 +19,5 @@ npm-debug.log*
 # app data
 .data
 generated-docs
+generated-videos
+node_modules

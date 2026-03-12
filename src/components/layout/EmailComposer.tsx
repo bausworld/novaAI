@@ -104,7 +104,7 @@ export function EmailComposer({ open, onClose }: EmailComposerProps) {
 
   if (sent) {
     return (
-      <Modal open={open} onClose={onClose}>
+      <Modal open={open} onClose={onClose} maxWidth={700}>
         <div style={{ width: "min(520px, 92vw)", padding: 40, textAlign: "center" }}>
           <div style={{
             width: 56, height: 56, borderRadius: "50%", background: "rgba(34,197,94,0.1)",
@@ -128,7 +128,7 @@ export function EmailComposer({ open, onClose }: EmailComposerProps) {
   }
 
   return (
-    <Modal open={open} onClose={onClose}>
+    <Modal open={open} onClose={onClose} maxWidth={700}>
       <div style={{ width: "min(680px, 95vw)", maxHeight: "88vh", display: "flex", flexDirection: "column" }}>
         {/* Header */}
         <div style={{

@@ -33,8 +33,10 @@ const TYPE_ICONS: Record<string, string> = {
   "Stock Data": "📈",
   "Text-to-Speech": "🔊",
   "Video Search": "🎬",
+  "Video Generation": "🎥",
   "Email": "📧",
   "Documents": "📄",
+  "Project Management": "📋",
 };
 
 export function ApiUsagePanel({ open, onClose }: ApiUsagePanelProps) {
@@ -59,8 +61,8 @@ export function ApiUsagePanel({ open, onClose }: ApiUsagePanelProps) {
   const freeServices = services.filter((s) => s.status === "free");
 
   return (
-    <Modal open={open} onClose={onClose}>
-      <div style={{ width: "min(560px, 92vw)", padding: "24px" }}>
+    <Modal open={open} onClose={onClose} maxWidth={600}>
+      <div style={{ padding: "24px" }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
           <div>

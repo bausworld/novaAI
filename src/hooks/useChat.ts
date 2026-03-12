@@ -1,19 +1,37 @@
 import { useCallback, useRef, useState } from "react";
 import { useChatStore } from "@/stores/chat-store";
-import { Message, Source, VideoResult, EmailDraft, GeneratedDoc, JiraResult } from "@/lib/types";
+import { Message, Source, VideoResult, EmailDraft, GeneratedDoc, JiraResult, GeneratedVideo, SavedRecipe } from "@/lib/types";
 
 function generateId() {
   return Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
 }
 
-function detectIntent(content: string): { wantsSearch: boolean; wantsVideo: boolean; wantsImage: boolean; wantsEmail: boolean; wantsDoc: boolean; wantsJira: boolean; docType: "docx" | "xlsx" | "pdf"; searchQuery: string; imagePrompt: string; emailTo: string } {
+function detectIntent(content: string): { wantsSearch: boolean; wantsVideo: boolean; wantsImage: boolean; wantsEmail: boolean; wantsDoc: boolean; wantsJira: boolean; wantsVideoGen: boolean; wantsRecipe: boolean; docType: "docx" | "xlsx" | "pdf"; searchQuery: string; imagePrompt: string; emailTo: string; videoGenPrompt: string; recipeQuery: string } {
   const lower = content.toLowerCase();
 
-  const wantsImage = /\b(generate|create|make|draw|paint|design|render|imagine)\b.*\b(image|picture|photo|art|illustration|icon|logo|portrait|scene|poster)\b/i.test(lower)
+  // Recipe detection: "add a recipe for X", "save recipe X", "new recipe X"
+  const wantsRecipe = /\b(add|save|create|import|find|get|new)\b.*\b(recipe|dish|meal)\b/i.test(lower)
+    || /\brecipe\b.*\b(for|of|about)\b/i.test(lower);
+
+  // Extract recipe query
+  let recipeQuery = content
+    .replace(/\b(add|save|create|import|find|get|new)\b\s*(a\s+|an\s+|the\s+)?(new\s+)?(recipe|dish|meal)\s*(for|of|about|called|named)?\s*/i, "")
+    .replace(/\b(to\s+)?(supabase|database|db|1yearchef)\b/gi, "")
+    .trim();
+  if (!recipeQuery || recipeQuery.length < 2) recipeQuery = content;
+
+  const wantsImage = !wantsRecipe && /\b(generate|create|make|draw|paint|design|render|imagine)\b.*\b(image|picture|photo|art|illustration|icon|logo|portrait|scene|poster)\b/i.test(lower)
     || /\b(image|picture|photo|art|illustration)\b.*\b(of|showing|with|featuring)\b/i.test(lower);
 
+  // VEO video generation detection
+  const wantsVideoGen = !wantsRecipe && !wantsImage && (
+    /\b(generate|create|make|render|produce)\b.*\b(video|clip|footage|animation|cinematic|film)\b/i.test(lower)
+    || /\b(video|clip|footage|animation)\b.*\b(of|showing|with|featuring|about)\b/i.test(lower)
+    || /\bveo\b/i.test(lower)
+  );
+
   // Jira detection: create, move, delete issues
-  const wantsJira = !wantsImage && (
+  const wantsJira = !wantsRecipe && !wantsImage && !wantsVideoGen && (
     /\b(create|make|add|open|file|log|submit)\b.*\b(jira|ticket|epic|story|subtask)\b/i.test(lower)
     || /\bjira\b.*\b(create|make|add|ticket|epic|story|subtask|issue|task|bug|move|put|remove|delete)\b/i.test(lower)
     || /\b(move|put)\b.*\b(CEO-\d+|issue|ticket|story)\b.*\b(sprint|backlog)\b/i.test(lower)
@@ -22,11 +40,11 @@ function detectIntent(content: string): { wantsSearch: boolean; wantsVideo: bool
   );
 
   // Email detection: "send an email to X", "email X about Y", "write an email to X"
-  const wantsEmail = !wantsImage && !wantsJira && (/\b(send|write|draft|compose|create)\b.*\b(email|e-mail|mail)\b/i.test(lower)
+  const wantsEmail = !wantsImage && !wantsVideoGen && !wantsJira && (/\b(send|write|draft|compose|create)\b.*\b(email|e-mail|mail)\b/i.test(lower)
     || /\bemail\b.*\b(to|about|regarding)\b/i.test(lower));
 
   // Document detection: "create a report", "generate a spreadsheet", "make a PDF"
-  const wantsDoc = !wantsImage && !wantsEmail && !wantsJira && (
+  const wantsDoc = !wantsImage && !wantsVideoGen && !wantsEmail && !wantsJira && (
     /\b(create|generate|make|build|write|draft)\b.*\b(report|document|doc|invoice|spreadsheet|worksheet|pdf|docx|xlsx|word\s+doc|excel|proposal|summary|brief|memo|letter|contract|receipt|statement)\b/i.test(lower)
     || /\b(report|document|invoice|spreadsheet|pdf|proposal|summary)\b.*\b(about|for|on|regarding|of)\b/i.test(lower)
   );
@@ -40,14 +58,14 @@ function detectIntent(content: string): { wantsSearch: boolean; wantsVideo: bool
   const emailMatch = content.match(/[\w.+-]+@[\w.-]+\.\w{2,}/);
   const emailTo = emailMatch ? emailMatch[0] : "";
 
-  const wantsVideo = !wantsImage && !wantsEmail && !wantsDoc && !wantsJira && /\b(youtube|video|watch|find.*video|show.*video|play.*video|clip)\b/i.test(lower);
+  const wantsVideo = !wantsImage && !wantsVideoGen && !wantsEmail && !wantsDoc && !wantsJira && /\b(youtube|video|watch|find.*video|show.*video|play.*video|clip)\b/i.test(lower);
 
   // Broad search detection: any question or knowledge request
   const isQuestion = /\?\s*$/.test(content.trim());
   const hasQuestionWords = /\b(what|who|where|when|why|how|which|is\s+there|are\s+there|can\s+you|do\s+you|does|did|will|should|could|would|tell\s+me|explain|describe)\b/i.test(lower);
   const hasSearchIntent = /\b(search|look\s*up|find|google|browse|latest|current|news|recent|today|right\s+now|now|2024|2025|2026|update|price|weather|score|result|president|vice\s*president|governor|mayor|ceo|leader|capital|population)\b/i.test(lower);
 
-  const wantsSearch = !wantsVideo && !wantsImage && !wantsEmail && !wantsDoc && !wantsJira && (isQuestion || hasQuestionWords || hasSearchIntent);
+  const wantsSearch = !wantsVideo && !wantsImage && !wantsVideoGen && !wantsEmail && !wantsDoc && !wantsJira && (isQuestion || hasQuestionWords || hasSearchIntent);
 
   // Extract clean search query
   let searchQuery = content
@@ -67,7 +85,13 @@ function detectIntent(content: string): { wantsSearch: boolean; wantsVideo: bool
     .replace(/^(an?\s+)?(image|picture|photo|art|illustration)\s+(of\s+)?/i, "")
     .trim();
 
-  return { wantsSearch, wantsVideo, wantsImage, wantsEmail, wantsDoc, wantsJira, docType, searchQuery: searchQuery || content, imagePrompt: imagePrompt || content, emailTo };
+  // Extract video gen prompt — strip the command words
+  let videoGenPrompt = content
+    .replace(/^(generate|create|make|render|produce)\s+(me\s+)?(an?\s+)?/i, "")
+    .replace(/^(an?\s+)?(video|clip|footage|animation)\s+(of\s+)?(about\s+)?/i, "")
+    .trim();
+
+  return { wantsSearch, wantsVideo, wantsImage, wantsEmail, wantsDoc, wantsJira, wantsVideoGen, wantsRecipe, docType, searchQuery: searchQuery || content, imagePrompt: imagePrompt || content, emailTo, videoGenPrompt: videoGenPrompt || content, recipeQuery };
 }
 
 export function useChat() {
@@ -119,7 +143,7 @@ export function useChat() {
       })) ?? [];
 
       // Detect if user wants search, video, image, email, or document
-      const { wantsSearch, wantsVideo, wantsImage, wantsEmail, wantsDoc, wantsJira, docType, searchQuery, imagePrompt, emailTo } = detectIntent(content);
+      const { wantsSearch, wantsVideo, wantsImage, wantsEmail, wantsDoc, wantsJira, wantsVideoGen, wantsRecipe, docType, searchQuery, imagePrompt, emailTo, videoGenPrompt, recipeQuery } = detectIntent(content);
 
       // RAG: Run search/video BEFORE the LLM so we can inject results into context
       let searchResults: Source[] = [];
@@ -189,6 +213,227 @@ export function useChat() {
       if (wantsImage && generatedImage) {
         updateMessage(convId!, assistantId, { content: "", isStreaming: false });
         setIsStreaming(false);
+        return;
+      }
+
+      // For VEO video generation requests
+      if (wantsVideoGen) {
+        try {
+          const model = "veo-3.1-generate-preview";
+          const aspectRatio = /\b(9:16|portrait|vertical|tall)\b/i.test(content) ? "9:16" : "16:9";
+          const resolution = /\b4k\b/i.test(content) ? "4k" : /\b1080p?\b/i.test(content) ? "1080p" : "720p";
+          const durationSeconds = /\b4\s*s(ec)?\b/i.test(content) ? 4 : /\b6\s*s(ec)?\b/i.test(content) ? 6 : 8;
+          // If 1080p or 4k, duration must be 8
+          const finalDuration = (resolution === "1080p" || resolution === "4k") ? 8 : durationSeconds;
+          const negativeMatch = content.match(/negative\s*(?:prompt)?[:\s]+(.+?)(?:\.|$)/i);
+          const negativePrompt = negativeMatch ? negativeMatch[1].trim() : undefined;
+
+          // Create the generatedVideo object to track status
+          const genVideo: GeneratedVideo = {
+            operationName: "",
+            prompt: videoGenPrompt,
+            model,
+            aspectRatio,
+            resolution,
+            durationSeconds: finalDuration,
+            status: "generating",
+            startedAt: Date.now(),
+          };
+
+          updateMessage(convId!, assistantId, {
+            content: `Generating your video... This typically takes 30 seconds to a few minutes.\n\n**Settings:** ${resolution} • ${aspectRatio} • ${finalDuration}s • ${model.replace("-generate-preview", "")}`,
+            generatedVideo: genVideo,
+            isStreaming: false,
+          });
+
+          // Start generation
+          const startRes = await fetch("/api/veo", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              prompt: videoGenPrompt,
+              model,
+              aspectRatio,
+              durationSeconds: finalDuration,
+              resolution,
+              negativePrompt,
+            }),
+          });
+
+          if (!startRes.ok) {
+            const err = await startRes.json();
+            updateMessage(convId!, assistantId, {
+              generatedVideo: { ...genVideo, status: "error", error: err.error || "Failed to start generation" },
+            });
+            setIsStreaming(false);
+            return;
+          }
+
+          const { operationName } = await startRes.json();
+          genVideo.operationName = operationName;
+          genVideo.status = "polling";
+          updateMessage(convId!, assistantId, { generatedVideo: { ...genVideo } });
+
+          // Poll for completion
+          let done = false;
+          let videoUri = "";
+          let pollCount = 0;
+          const maxPolls = 60; // 10s intervals × 60 = 10 minutes max
+
+          while (!done && pollCount < maxPolls) {
+            await new Promise(r => setTimeout(r, 10000));
+            pollCount++;
+
+            try {
+              const pollRes = await fetch(`/api/veo?operationName=${encodeURIComponent(operationName)}`);
+              const pollData = await pollRes.json();
+
+              if (pollData.done) {
+                done = true;
+                videoUri = pollData.videoUri || "";
+              }
+              if (pollData.error) {
+                updateMessage(convId!, assistantId, {
+                  generatedVideo: { ...genVideo, status: "error", error: pollData.error },
+                });
+                setIsStreaming(false);
+                return;
+              }
+            } catch {
+              // Transient poll error — keep trying
+            }
+          }
+
+          if (!done) {
+            updateMessage(convId!, assistantId, {
+              generatedVideo: { ...genVideo, status: "error", error: "Video generation timed out after 10 minutes" },
+            });
+            setIsStreaming(false);
+            return;
+          }
+
+          // Download the video through our proxy
+          genVideo.status = "downloading";
+          updateMessage(convId!, assistantId, { generatedVideo: { ...genVideo } });
+
+          const downloadRes = await fetch(`/api/veo?download=${encodeURIComponent(videoUri)}`);
+          if (!downloadRes.ok) {
+            updateMessage(convId!, assistantId, {
+              generatedVideo: { ...genVideo, status: "error", error: "Failed to download video" },
+            });
+            setIsStreaming(false);
+            return;
+          }
+
+          const videoBlob = await downloadRes.blob();
+          const videoUrl = URL.createObjectURL(videoBlob);
+
+          updateMessage(convId!, assistantId, {
+            content: `Your video is ready! Generated in ${Math.round((Date.now() - genVideo.startedAt) / 1000)}s.`,
+            generatedVideo: { ...genVideo, status: "ready", videoUrl },
+          });
+        } catch (err) {
+          updateMessage(convId!, assistantId, {
+            content: `Sorry, video generation failed. ${err instanceof Error ? err.message : ""}`,
+            isStreaming: false,
+          });
+        } finally {
+          setIsStreaming(false);
+        }
+        return;
+      }
+
+      // For recipe requests: search Spoonacular, generate image, save to Supabase
+      if (wantsRecipe) {
+        try {
+          const savedRecipe: SavedRecipe = {
+            slug: "",
+            title: recipeQuery,
+            tagline: "",
+            servings: "",
+            prep_time: null,
+            cook_time: null,
+            total_time: null,
+            image_url: "",
+            ingredients: [],
+            instructions: [],
+            tags: [],
+            nutrition: {},
+            status: "searching",
+          };
+
+          updateMessage(convId!, assistantId, {
+            content: `Searching for "${recipeQuery}"...`,
+            savedRecipe,
+            isStreaming: false,
+          });
+
+          const res = await fetch("/api/recipes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query: recipeQuery }),
+          });
+
+          const data = await res.json();
+
+          // If options are returned, show pills for selection
+          if (data.options && Array.isArray(data.options)) {
+            updateMessage(convId!, assistantId, {
+              content: `Pick a recipe to add:`,
+              recipeOptions: data.options,
+              isStreaming: false,
+            });
+            setIsStreaming(false);
+            return;
+          }
+
+          if (!res.ok) {
+            if (data.error === "duplicate") {
+              updateMessage(convId!, assistantId, {
+                content: `**${data.message}**\n\nView it at [1yearchef.com/recipes/${data.slug}](https://www.1yearchef.com/recipes/${data.slug})`,
+                savedRecipe: { ...savedRecipe, status: "error", error: data.message },
+              });
+            } else {
+              updateMessage(convId!, assistantId, {
+                content: `Sorry, I couldn't add that recipe: ${data.error || "Unknown error"}`,
+                savedRecipe: { ...savedRecipe, status: "error", error: data.error },
+              });
+            }
+            setIsStreaming(false);
+            return;
+          }
+
+          const recipe = data.recipe;
+          const finalRecipe: SavedRecipe = {
+            slug: recipe.slug,
+            title: recipe.title,
+            tagline: recipe.tagline || "",
+            servings: recipe.servings || "",
+            prep_time: recipe.prep_time,
+            cook_time: recipe.cook_time,
+            total_time: recipe.total_time,
+            image_url: recipe.image_url || "",
+            ingredients: recipe.ingredients || [],
+            instructions: recipe.instructions || [],
+            tags: recipe.tags || [],
+            nutrition: recipe.nutrition || {},
+            status: "ready",
+          };
+
+          updateMessage(convId!, assistantId, {
+            content: `**${recipe.title}** has been added to the database!${data.imageGenerated ? " A custom hero image was generated." : ""}\n\nView it at [1yearchef.com/recipes/${recipe.slug}](https://www.1yearchef.com/recipes/${recipe.slug})`,
+            savedRecipe: finalRecipe,
+            recipeOptions: undefined,
+          });
+
+        } catch (err) {
+          updateMessage(convId!, assistantId, {
+            content: `Sorry, recipe import failed. ${err instanceof Error ? err.message : ""}`,
+            isStreaming: false,
+          });
+        } finally {
+          setIsStreaming(false);
+        }
         return;
       }
 

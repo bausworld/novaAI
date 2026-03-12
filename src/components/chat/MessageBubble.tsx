@@ -3,7 +3,88 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Message, EmailDraft, GeneratedDoc, JiraResult, JiraIssue } from "@/lib/types";
+import { Message, EmailDraft, GeneratedDoc, JiraResult, JiraIssue, GeneratedVideo, SavedRecipe } from "@/lib/types";
+// Pills for recipe selection
+function RecipeOptionPills({ options, messageId, conversationId }: { options: any[]; messageId: string; conversationId: string }) {
+  const updateMessage = useChatStore(s => s.updateMessage);
+  const [submitting, setSubmitting] = React.useState<number | null>(null);
+
+  const handlePick = async (index: number) => {
+    setSubmitting(index);
+    try {
+      const res = await fetch("/api/recipes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: options[index].title, selected: index }),
+      });
+      const data = await res.json();
+      if (res.ok && data.recipe) {
+        updateMessage(conversationId, messageId, {
+          content: `**${data.recipe.title}** has been added to the database!${data.imageGenerated ? " A custom hero image was generated." : ""}\n\nView it at [1yearchef.com/recipes/${data.recipe.slug}](https://www.1yearchef.com/recipes/${data.recipe.slug})`,
+          savedRecipe: {
+            slug: data.recipe.slug,
+            title: data.recipe.title,
+            tagline: data.recipe.tagline || "",
+            servings: data.recipe.servings || "",
+            prep_time: data.recipe.prep_time,
+            cook_time: data.recipe.cook_time,
+            total_time: data.recipe.total_time,
+            image_url: data.recipe.image_url || "",
+            ingredients: data.recipe.ingredients || [],
+            instructions: data.recipe.instructions || [],
+            tags: data.recipe.tags || [],
+            nutrition: data.recipe.nutrition || {},
+            status: "ready",
+          },
+          recipeOptions: undefined,
+        });
+      } else {
+        updateMessage(conversationId, messageId, {
+          content: `Sorry, recipe import failed. ${data.error || "Unknown error"}`,
+          recipeOptions: undefined,
+        });
+      }
+    } catch (err) {
+      updateMessage(conversationId, messageId, {
+        content: `Sorry, recipe import failed. ${err instanceof Error ? err.message : ""}`,
+        recipeOptions: undefined,
+      });
+    } finally {
+      setSubmitting(null);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", gap: 12, margin: "16px 0" }}>
+      {options.map((opt, i) => (
+        <button
+          key={i}
+          onClick={() => handlePick(i)}
+          disabled={submitting !== null}
+          style={{
+            padding: "10px 18px",
+            borderRadius: 999,
+            border: submitting === i ? "2px solid var(--accent)" : "1.5px solid var(--border)",
+            background: submitting === i ? "var(--accent)" : "var(--surface-tertiary)",
+            color: submitting === i ? "#fff" : "var(--text-primary)",
+            fontWeight: 600,
+            fontSize: 15,
+            cursor: submitting !== null ? "not-allowed" : "pointer",
+            boxShadow: submitting === i ? "0 2px 8px rgba(34,197,94,0.12)" : undefined,
+            transition: "all 0.18s",
+            minWidth: 0,
+            maxWidth: 220,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {opt.title}
+        </button>
+      ))}
+    </div>
+  );
+}
 import { SourceCitation } from "./SourceCitation";
 import { VideoCard } from "./VideoCard";
 import { useChatStore } from "@/stores/chat-store";
@@ -529,7 +610,360 @@ function JiraCard({ result }: { result: JiraResult }) {
   );
 }
 
+function RecipeCard({ recipe }: { recipe: SavedRecipe }) {
+  const [showNutrition, setShowNutrition] = useState(false);
+  const [showInstructions, setShowInstructions] = useState(false);
+  const isReady = recipe.status === "ready";
+  const isError = recipe.status === "error";
+  const isLoading = recipe.status === "searching" || recipe.status === "generating-image" || recipe.status === "saving";
+
+  const statusLabel =
+    recipe.status === "searching" ? "Searching for recipe..." :
+    recipe.status === "generating-image" ? "Generating hero image..." :
+    recipe.status === "saving" ? "Saving to database..." :
+    recipe.status === "error" ? "Error" : "";
+
+  return (
+    <div style={{
+      marginTop: 10,
+      borderRadius: 14,
+      border: "1.5px solid var(--border)",
+      background: "var(--surface-secondary)",
+      overflow: "hidden",
+    }}>
+      {/* Header */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8,
+        padding: "12px 16px",
+        background: isReady ? "rgba(34,197,94,0.06)" : isError ? "rgba(239,68,68,0.06)" : "var(--surface-tertiary)",
+        borderBottom: "1px solid var(--border)",
+      }}>
+        <span style={{ fontSize: 16 }}>🍽️</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", flex: 1 }}>
+          {isReady ? recipe.title : isError ? "Recipe Error" : "Adding Recipe..."}
+        </span>
+        {isLoading && (
+          <span style={{ fontSize: 11, color: "var(--accent)", fontWeight: 500 }}>{statusLabel}</span>
+        )}
+        {isReady && (
+          <span style={{ fontSize: 11, color: "#22c55e", fontWeight: 600 }}>Saved ✓</span>
+        )}
+      </div>
+
+      {/* Loading state */}
+      {isLoading && (
+        <div style={{ padding: "20px 16px", textAlign: "center" }}>
+          <div className="animate-progress-bar" style={{
+            height: 4, borderRadius: 2, background: "var(--surface-tertiary)",
+            overflow: "hidden", marginBottom: 8,
+          }}>
+            <div style={{
+              height: "100%", width: "60%", borderRadius: 2,
+              background: "var(--accent)",
+              animation: "progressSlide 2s ease-in-out infinite",
+            }} />
+          </div>
+          <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{statusLabel}</span>
+        </div>
+      )}
+
+      {/* Error state */}
+      {isError && recipe.error && (
+        <div style={{ padding: "12px 16px", color: "#ef4444", fontSize: 13 }}>{recipe.error}</div>
+      )}
+
+      {/* Recipe content */}
+      {isReady && (
+        <>
+          {/* Hero media: video plays once on desktop, then crossfades to image */}
+          <div style={{ display: "flex", gap: 0 }}>
+            {recipe.image_url && (
+              <div style={{ width: 140, minHeight: 140, flexShrink: 0, position: "relative", overflow: "hidden" }}>
+                <img
+                  src={recipe.image_url}
+                  alt={recipe.title}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
+              </div>
+            )}
+            <div style={{ flex: 1, padding: "12px 16px" }}>
+              <div style={{ fontSize: 11, color: "var(--text-secondary)", fontWeight: 500, marginBottom: 4 }}>
+                {recipe.tagline}
+              </div>
+              <div style={{ display: "flex", gap: 12, fontSize: 12, color: "var(--text-secondary)", marginBottom: 8 }}>
+                {recipe.total_time && <span>⏱ {recipe.total_time}</span>}
+                {recipe.servings && <span>👥 {recipe.servings} servings</span>}
+              </div>
+              {/* Tags */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                {recipe.tags.slice(0, 6).map((tag) => (
+                  <span key={tag} style={{
+                    fontSize: 10, fontWeight: 600,
+                    padding: "2px 8px", borderRadius: 10,
+                    background: "var(--accent-alpha-10, rgba(99,102,241,0.1))",
+                    color: "var(--accent)",
+                  }}>{tag}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Ingredients */}
+          <div style={{ borderTop: "1px solid var(--border)", padding: "12px 16px" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", marginBottom: 6 }}>
+              Ingredients ({recipe.ingredients.length})
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3px 12px" }}>
+              {recipe.ingredients.map((ing, i) => (
+                <div key={i} style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+                  • {ing}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Instructions toggle */}
+          <div style={{ borderTop: "1px solid var(--border)" }}>
+            <button
+              onClick={() => setShowInstructions(!showInstructions)}
+              style={{
+                width: "100%", padding: "10px 16px",
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                background: "none", border: "none", cursor: "pointer",
+                fontSize: 12, fontWeight: 700, color: "var(--text-primary)",
+              }}
+            >
+              <span>Instructions ({recipe.instructions.length} steps)</span>
+              <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>
+                {showInstructions ? "▲ Hide" : "▼ Show"}
+              </span>
+            </button>
+            {showInstructions && (
+              <div style={{ padding: "0 16px 12px 16px" }}>
+                {recipe.instructions.map((step, i) => (
+                  <div key={i} style={{
+                    display: "flex", gap: 8, marginBottom: 6,
+                    fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5,
+                  }}>
+                    <span style={{
+                      flexShrink: 0, width: 20, height: 20, borderRadius: "50%",
+                      background: "var(--accent)", color: "#fff",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 10, fontWeight: 700, marginTop: 1,
+                    }}>{i + 1}</span>
+                    <span>{step}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Nutrition toggle */}
+          <div style={{ borderTop: "1px solid var(--border)" }}>
+            <button
+              onClick={() => setShowNutrition(!showNutrition)}
+              style={{
+                width: "100%", padding: "10px 16px",
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                background: "none", border: "none", cursor: "pointer",
+                fontSize: 12, fontWeight: 700, color: "var(--text-primary)",
+              }}
+            >
+              <span>Nutrition Facts (per serving)</span>
+              <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>
+                {showNutrition ? "▲ Hide" : "▼ Show"}
+              </span>
+            </button>
+            {showNutrition && (
+              <div style={{ padding: "0 16px 12px 16px" }}>
+                <div style={{
+                  display: "grid", gridTemplateColumns: "1fr 1fr 1fr",
+                  gap: 6,
+                }}>
+                  {Object.entries(recipe.nutrition).map(([key, value]) => {
+                    const label = key.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase());
+                    return (
+                      <div key={key} style={{
+                        padding: "6px 8px", borderRadius: 8,
+                        background: "var(--surface-tertiary)",
+                        fontSize: 11,
+                      }}>
+                        <div style={{ color: "var(--text-secondary)", fontSize: 10 }}>{label}</div>
+                        <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>{value}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Link */}
+          <div style={{
+            borderTop: "1px solid var(--border)",
+            padding: "10px 16px",
+            display: "flex", justifyContent: "flex-end",
+          }}>
+            <a
+              href={`https://www.1yearchef.com/recipes/${recipe.slug}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                fontSize: 12, fontWeight: 600,
+                color: "var(--accent)", textDecoration: "none",
+                display: "flex", alignItems: "center", gap: 4,
+              }}
+            >
+              View on 1YearChef →
+            </a>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function VeoVideoCard({ video }: { video: GeneratedVideo }) {
+  const isGenerating = video.status === "generating" || video.status === "polling" || video.status === "downloading";
+  const isReady = video.status === "ready" && video.videoUrl;
+  const isError = video.status === "error";
+  const elapsed = Math.round((Date.now() - video.startedAt) / 1000);
+
+  const statusLabel: Record<string, string> = {
+    generating: "Starting generation...",
+    polling: "Generating video...",
+    downloading: "Downloading video...",
+    ready: "Video ready",
+    error: "Generation failed",
+  };
+
+  const handleDownload = () => {
+    if (!video.videoUrl) return;
+    const a = document.createElement("a");
+    a.href = video.videoUrl;
+    a.download = `nova-veo-${Date.now()}.mp4`;
+    a.click();
+  };
+
+  return (
+    <div style={{
+      marginTop: 10,
+      borderRadius: 14,
+      border: `1.5px solid ${isError ? "#ef4444" : isReady ? "#22c55e" : "var(--border)"}`,
+      background: "var(--surface-secondary)",
+      overflow: "hidden",
+    }}>
+      {/* Header */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8,
+        padding: "12px 16px",
+        borderBottom: "1px solid var(--border)",
+        background: isError ? "rgba(239,68,68,0.06)" : isReady ? "rgba(34,197,94,0.06)" : "var(--surface-tertiary)",
+      }}>
+        <span style={{ fontSize: 18 }}>🎬</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", flex: 1 }}>
+          {statusLabel[video.status]}
+        </span>
+        {isGenerating && (
+          <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>{elapsed}s</span>
+        )}
+      </div>
+
+      {/* Settings row */}
+      <div style={{ padding: "10px 16px", display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {[
+          { label: "Resolution", value: video.resolution },
+          { label: "Ratio", value: video.aspectRatio },
+          { label: "Duration", value: `${video.durationSeconds}s` },
+          { label: "Model", value: video.model.replace("-generate-preview", "").replace("-fast", " Fast") },
+        ].map(tag => (
+          <span key={tag.label} style={{
+            fontSize: 11, fontWeight: 500,
+            padding: "3px 8px", borderRadius: 6,
+            background: "var(--surface-primary)", border: "1px solid var(--border)",
+            color: "var(--text-secondary)",
+          }}>
+            {tag.label}: <strong style={{ color: "var(--text-primary)" }}>{tag.value}</strong>
+          </span>
+        ))}
+      </div>
+
+      {/* Generating animation */}
+      {isGenerating && (
+        <div style={{ padding: "20px 16px", textAlign: "center" }}>
+          <div style={{
+            width: "100%", height: 4, borderRadius: 2,
+            background: "var(--surface-tertiary)", overflow: "hidden",
+          }}>
+            <div className="animate-progress-bar" style={{
+              width: "40%", height: "100%", borderRadius: 2,
+              background: "var(--accent)",
+            }} />
+          </div>
+          <p style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 10 }}>
+            {video.status === "downloading" ? "Downloading your video..." : "VEO is generating your video — this usually takes 30s to 6 minutes"}
+          </p>
+        </div>
+      )}
+
+      {/* Error display */}
+      {isError && (
+        <div style={{ padding: "14px 16px", color: "#ef4444", fontSize: 13 }}>
+          {video.error || "An unknown error occurred"}
+        </div>
+      )}
+
+      {/* Video player */}
+      {isReady && video.videoUrl && (
+        <div style={{ padding: "0 16px 12px" }}>
+          <video
+            src={video.videoUrl}
+            controls
+            autoPlay
+            loop
+            playsInline
+            style={{
+              width: "100%",
+              borderRadius: 10,
+              border: "1px solid var(--border)",
+              maxHeight: 400,
+              background: "#000",
+            }}
+          />
+        </div>
+      )}
+
+      {/* Download button */}
+      {isReady && (
+        <div style={{
+          display: "flex", gap: 8, padding: "10px 16px",
+          borderTop: "1px solid var(--border)",
+        }}>
+          <button
+            onClick={handleDownload}
+            style={{
+              display: "flex", alignItems: "center", gap: 6,
+              padding: "8px 16px", fontSize: 12, fontWeight: 600,
+              borderRadius: 8, border: "none",
+              background: "var(--accent)", color: "#fff",
+              cursor: "pointer",
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            Download MP4
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MessageBubble({ message }: MessageBubbleProps) {
+  const conversationId = useChatStore(s => s.activeConversationId);
   const isUser = message.role === "user";
   const hasVideos = message.videos && message.videos.length > 0;
   const hasSources = message.sources && message.sources.length > 0;
@@ -554,65 +988,30 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            marginTop: 2,
           }}>
-            <span style={{ color: "#fff", fontSize: 10, fontWeight: 700 }}>N</span>
+            {/* Avatar icon or image here if needed */}
           </div>
         )}
-
-        <div style={{ minWidth: 0, flex: 1 }}>
-          {/* Bubble */}
-          <div className={isUser ? "nova-bubble-user" : "nova-bubble-ai"}>
-            {isUser ? (
-              <div style={{ fontSize: 15, lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                {message.content}
-              </div>
-            ) : (
-              <div className="nova-markdown">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={{
-                    a: ({ href, children }) => (
-                      <a
-                        href={href}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {children}
-                      </a>
-                    ),
-                    code: ({ className, children, ...props }) => {
-                      const match = /language-(\w+)/.exec(className || "");
-                      const codeStr = String(children);
-                      // Block code (has language class from markdown fences)
-                      if (match) {
-                        return <CodeBlock lang={match[1]}>{codeStr}</CodeBlock>;
-                      }
-                      // Inline code
-                      return <code className={className} {...props}>{children}</code>;
-                    },
-                    pre: ({ children }) => <>{children}</>,
-                  }}
-                >
-                  {message.content}
-                </ReactMarkdown>
-                {message.isStreaming && (
-                  <span
-                    className="animate-blink"
-                    style={{
-                      display: "inline-block",
-                      width: 2,
-                      height: "1em",
-                      background: "var(--accent)",
-                      marginLeft: 2,
-                      verticalAlign: "text-bottom",
-                    }}
-                  />
-                )}
-              </div>
-            )}
-          </div>
-
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Pills for recipe selection */}
+          {message.recipeOptions && Array.isArray(message.recipeOptions) && message.recipeOptions.length > 0 && conversationId && (
+            <RecipeOptionPills options={message.recipeOptions} messageId={message.id} conversationId={conversationId} />
+          )}
+          {/* Message content */}
+          {message.content && (
+            <ReactMarkdown
+              children={message.content}
+              remarkPlugins={[remarkGfm]}
+              components={{
+                code: ({ node, inline, className, children, ...props }) =>
+                  !inline ? (
+                    <CodeBlock lang={className?.replace(/^language-/, "")}>{String(children)}</CodeBlock>
+                  ) : (
+                    <code {...props} style={{ background: "var(--surface-tertiary)", borderRadius: 4, padding: "1px 5px", fontSize: 13 }}>{children}</code>
+                  ),
+              }}
+            />
+          )}
           {/* Generated image - outside bubble */}
           {hasImage && (
             <div style={{ marginTop: 10 }}>
@@ -628,22 +1027,26 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               />
             </div>
           )}
-
           {/* Email draft card - outside bubble */}
           {hasEmailDraft && (
             <EmailDraftCard draft={message.emailDraft!} messageId={message.id} />
           )}
-
           {/* Generated document card - outside bubble */}
           {message.generatedDoc && (
             <DocumentCard doc={message.generatedDoc} />
           )}
-
           {/* Jira result card - outside bubble */}
           {message.jiraResult && (
             <JiraCard result={message.jiraResult} />
           )}
-
+          {/* VEO generated video card - outside bubble */}
+          {message.generatedVideo && (
+            <VeoVideoCard video={message.generatedVideo} />
+          )}
+          {/* Saved recipe card - outside bubble */}
+          {message.savedRecipe && (
+            <RecipeCard recipe={message.savedRecipe} />
+          )}
           {/* Videos grid - outside bubble */}
           {hasVideos && (
             <div className="nova-video-grid" style={{ marginTop: 10 }}>
@@ -652,14 +1055,12 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               ))}
             </div>
           )}
-
           {/* Sources - outside bubble */}
           {hasSources && (
             <div style={{ marginTop: 8 }}>
               <SourceCitation sources={message.sources!} />
             </div>
           )}
-
           {/* Timestamp + speaker */}
           <div style={{
             fontSize: 11,
