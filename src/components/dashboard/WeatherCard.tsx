@@ -61,7 +61,25 @@ export function WeatherCard() {
     );
   }
 
-  if (!weather) return null;
+  if (!weather) {
+    return (
+      <>
+        <div className="weather-card weather-card-full">
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 28 }}>🌡️</span>
+            <div>
+              <div style={{ fontSize: 14, color: "rgba(255,255,255,0.7)", fontWeight: 500 }}>Weather unavailable</div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Could not fetch forecast</div>
+            </div>
+          </div>
+        </div>
+        <div className="weather-pill" style={{ opacity: 0.5 }}>
+          <span className="weather-pill-icon">🌡️</span>
+          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>Unavailable</span>
+        </div>
+      </>
+    );
+  }
 
   const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 

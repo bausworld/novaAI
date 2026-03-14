@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Message, EmailDraft, GeneratedDoc, JiraResult, JiraIssue, GeneratedVideo, SavedRecipe } from "@/lib/types";
+import { Message, EmailDraft, GeneratedDoc, JiraResult, JiraIssue, GeneratedVideo, SavedRecipe, BufferResult } from "@/lib/types";
 // Pills for recipe selection
 function RecipeOptionPills({ options, messageId, conversationId }: { options: any[]; messageId: string; conversationId: string }) {
   const updateMessage = useChatStore(s => s.updateMessage);
@@ -15,7 +15,7 @@ function RecipeOptionPills({ options, messageId, conversationId }: { options: an
       const res = await fetch("/api/recipes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: options[index].title, selected: index }),
+        body: JSON.stringify({ query: options[index].title, selected: 0 }),
       });
       const data = await res.json();
       if (res.ok && data.recipe) {
@@ -55,28 +55,29 @@ function RecipeOptionPills({ options, messageId, conversationId }: { options: an
   };
 
   return (
-    <div style={{ display: "flex", gap: 12, margin: "16px 0" }}>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, margin: "16px 0" }}>
       {options.map((opt, i) => (
         <button
           key={i}
           onClick={() => handlePick(i)}
           disabled={submitting !== null}
+          title={opt.title}
           style={{
             padding: "10px 18px",
-            borderRadius: 999,
+            borderRadius: 12,
             border: submitting === i ? "2px solid var(--accent)" : "1.5px solid var(--border)",
             background: submitting === i ? "var(--accent)" : "var(--surface-tertiary)",
             color: submitting === i ? "#fff" : "var(--text-primary)",
             fontWeight: 600,
-            fontSize: 15,
+            fontSize: 14,
             cursor: submitting !== null ? "not-allowed" : "pointer",
             boxShadow: submitting === i ? "0 2px 8px rgba(34,197,94,0.12)" : undefined,
             transition: "all 0.18s",
             minWidth: 0,
-            maxWidth: 220,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
+            maxWidth: 320,
+            textAlign: "left",
+            whiteSpace: "normal",
+            lineHeight: 1.35,
           }}
         >
           {opt.title}
@@ -696,7 +697,7 @@ function RecipeCard({ recipe }: { recipe: SavedRecipe }) {
               </div>
               {/* Tags */}
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                {recipe.tags.slice(0, 6).map((tag) => (
+                {(recipe.tags ?? []).slice(0, 6).map((tag) => (
                   <span key={tag} style={{
                     fontSize: 10, fontWeight: 600,
                     padding: "2px 8px", borderRadius: 10,
@@ -711,10 +712,10 @@ function RecipeCard({ recipe }: { recipe: SavedRecipe }) {
           {/* Ingredients */}
           <div style={{ borderTop: "1px solid var(--border)", padding: "12px 16px" }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", marginBottom: 6 }}>
-              Ingredients ({recipe.ingredients.length})
+              Ingredients ({(recipe.ingredients ?? []).length})
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3px 12px" }}>
-              {recipe.ingredients.map((ing, i) => (
+              {(recipe.ingredients ?? []).map((ing, i) => (
                 <div key={i} style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>
                   • {ing}
                 </div>
@@ -733,14 +734,14 @@ function RecipeCard({ recipe }: { recipe: SavedRecipe }) {
                 fontSize: 12, fontWeight: 700, color: "var(--text-primary)",
               }}
             >
-              <span>Instructions ({recipe.instructions.length} steps)</span>
+              <span>Instructions ({(recipe.instructions ?? []).length} steps)</span>
               <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>
                 {showInstructions ? "▲ Hide" : "▼ Show"}
               </span>
             </button>
             {showInstructions && (
               <div style={{ padding: "0 16px 12px 16px" }}>
-                {recipe.instructions.map((step, i) => (
+                {(recipe.instructions ?? []).map((step, i) => (
                   <div key={i} style={{
                     display: "flex", gap: 8, marginBottom: 6,
                     fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5,
@@ -780,7 +781,7 @@ function RecipeCard({ recipe }: { recipe: SavedRecipe }) {
                   display: "grid", gridTemplateColumns: "1fr 1fr 1fr",
                   gap: 6,
                 }}>
-                  {Object.entries(recipe.nutrition).map(([key, value]) => {
+                  {Object.entries(recipe.nutrition ?? {}).map(([key, value]) => {
                     const label = key.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase());
                     return (
                       <div key={key} style={{
@@ -962,6 +963,89 @@ function VeoVideoCard({ video }: { video: GeneratedVideo }) {
   );
 }
 
+function BufferCard({ result }: { result: BufferResult }) {
+  const isSuccess = result.status === "success";
+  const isDraft = result.action === "createIdea";
+  const actionLabel: Record<string, string> = {
+    createTextPost: "Text Post",
+    createImagePost: "Image Post",
+    createVideoPost: "Video Post",
+    createIdea: "Draft / Idea",
+  };
+  return (
+    <div style={{
+      marginTop: 10,
+      borderRadius: 14,
+      border: `1.5px solid ${isSuccess ? "#22c55e" : "#ef4444"}`,
+      background: "var(--surface-secondary)",
+      overflow: "hidden",
+    }}>
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8,
+        padding: "12px 16px",
+        background: isSuccess ? "rgba(34,197,94,0.06)" : "rgba(239,68,68,0.06)",
+        borderBottom: "1px solid var(--border)",
+      }}>
+        {/* Buffer logo mark */}
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="3" y="5" width="18" height="3" rx="1.5" fill={isSuccess ? "#22c55e" : "#ef4444"} />
+          <rect x="3" y="10.5" width="18" height="3" rx="1.5" fill={isSuccess ? "#22c55e" : "#ef4444"} />
+          <rect x="3" y="16" width="18" height="3" rx="1.5" fill={isSuccess ? "#22c55e" : "#ef4444"} />
+        </svg>
+        <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>
+          Buffer {actionLabel[result.action] || result.action}
+        </span>
+        <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 600, color: isSuccess ? "#22c55e" : "#ef4444" }}>
+          {isSuccess ? (isDraft ? "Saved ✓" : "Scheduled ✓") : "Failed"}
+        </span>
+      </div>
+      <div style={{ padding: "12px 16px", fontSize: 13 }}>
+        {result.post && (
+          <div style={{ marginBottom: 8, color: "var(--text-primary)", lineHeight: 1.5 }}>
+            <span style={{ fontWeight: 600, color: "var(--text-secondary)", marginRight: 6 }}>Post:</span>
+            {result.post.text}
+          </div>
+        )}
+        {result.idea && (
+          <div style={{ marginBottom: 8, color: "var(--text-primary)", lineHeight: 1.5 }}>
+            <span style={{ fontWeight: 600, color: "var(--text-secondary)", marginRight: 6 }}>Idea:</span>
+            {result.idea.content?.title || result.idea.content?.text || ""}
+          </div>
+        )}
+        {result.error && (
+          <div style={{ color: "#ef4444", fontSize: 12 }}>{result.error}</div>
+        )}
+        {isSuccess && isDraft && (
+          <a
+            href="https://publish.buffer.com/ideas"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              marginTop: 8,
+              padding: "6px 14px",
+              borderRadius: 8,
+              background: "rgba(34,197,94,0.12)",
+              border: "1px solid rgba(34,197,94,0.3)",
+              color: "#22c55e",
+              fontSize: 12,
+              fontWeight: 600,
+              textDecoration: "none",
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+              <polyline points="15 3 21 3 21 9" />
+              <line x1="10" y1="14" x2="21" y2="3" />
+            </svg>
+            Open in Buffer Ideas
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function MessageBubble({ message }: MessageBubbleProps) {
   const conversationId = useChatStore(s => s.activeConversationId);
   const isUser = message.role === "user";
@@ -1003,12 +1087,14 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               children={message.content}
               remarkPlugins={[remarkGfm]}
               components={{
-                code: ({ node, inline, className, children, ...props }) =>
-                  !inline ? (
+                code: ({ node, className, children, ...props }) => {
+                  const isBlock = !!className || String(children).includes("\n");
+                  return isBlock ? (
                     <CodeBlock lang={className?.replace(/^language-/, "")}>{String(children)}</CodeBlock>
                   ) : (
                     <code {...props} style={{ background: "var(--surface-tertiary)", borderRadius: 4, padding: "1px 5px", fontSize: 13 }}>{children}</code>
-                  ),
+                  );
+                },
               }}
             />
           )}
@@ -1046,6 +1132,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           {/* Saved recipe card - outside bubble */}
           {message.savedRecipe && (
             <RecipeCard recipe={message.savedRecipe} />
+          )}
+          {/* Buffer result card - outside bubble */}
+          {message.bufferResult && (
+            <BufferCard result={message.bufferResult} />
           )}
           {/* Videos grid - outside bubble */}
           {hasVideos && (

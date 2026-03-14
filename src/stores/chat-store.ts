@@ -30,6 +30,7 @@ interface ChatState {
   videoModal: { open: boolean; videoId?: string; url?: string };
   uploadedContext: Array<{ name: string; content: string }>;
   selectedModel: string;
+  videoDuration: 2 | 5 | 8;
 
   // Actions
   createConversation: () => string;
@@ -47,6 +48,7 @@ interface ChatState {
   removeUploadedContext: (name: string) => void;
   clearUploadedContext: () => void;
   setSelectedModel: (model: string) => void;
+  setVideoDuration: (d: 2 | 5 | 8) => void;
 }
 
 export const useChatStore = create<ChatState>()(
@@ -59,6 +61,7 @@ export const useChatStore = create<ChatState>()(
       videoModal: { open: false },
       uploadedContext: [],
       selectedModel: "",
+      videoDuration: 8,
 
       createConversation: () => {
         const id = generateId();
@@ -168,6 +171,7 @@ export const useChatStore = create<ChatState>()(
       },
       clearUploadedContext: () => set({ uploadedContext: [] }),
       setSelectedModel: (model) => set({ selectedModel: model }),
+      setVideoDuration: (d) => set({ videoDuration: d }),
     }),
     {
       name: "nova-chat-storage",
@@ -189,6 +193,7 @@ export const useChatStore = create<ChatState>()(
         activeConversationId: null,
         theme: state.theme,
         selectedModel: state.selectedModel,
+        videoDuration: state.videoDuration,
       }),
       onRehydrateStorage: () => (state) => {
         // One-time: clear bloated localStorage with base64 images
@@ -198,6 +203,14 @@ export const useChatStore = create<ChatState>()(
             localStorage.removeItem("nova-chat-storage");
           }
         } catch { /* ignore */ }
+
+        // Clear ephemeral state that should never survive a page reload
+        if (state) {
+          state.uploadedContext = [];
+          if (![2, 5, 8].includes(state.videoDuration as number)) {
+            state.videoDuration = 8;
+          }
+        }
 
         // Load from server on startup (server data wins if newer)
         fetch("/api/conversations")

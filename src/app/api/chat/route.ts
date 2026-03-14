@@ -3,6 +3,15 @@ import { NextRequest } from "next/server";
 const OLLAMA_URL = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "mistral:7b-instruct-v0.2-q8_0";
 
+async function isOllamaAvailable(): Promise<boolean> {
+  try {
+    const res = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(2000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 const SYSTEM_PROMPT = `You are Nova, a helpful AI assistant. Be direct and concise. Get to the answer immediately.
 
 TODAY'S DATE: ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.
@@ -59,6 +68,17 @@ INSTRUCTIONS: Base your answer ENTIRELY on the facts above. If the facts say som
     systemContent += `\n\nThe user has provided the following context documents. Use them to answer their questions:\n\n${contextBlocks}`;
   }
 
+  if (!await isOllamaAvailable()) {
+    return new Response(
+      JSON.stringify({ error: "Ollama is not reachable. Please ensure your Ollama server is running." }),
+      { status: 503, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  return streamOllama(systemContent, messages, selectedModel);
+}
+
+async function streamOllama(systemContent: string, messages: { role: string; content: string }[], model: string) {
   const ollamaMessages = [
     { role: "system", content: systemContent },
     ...messages,
@@ -69,7 +89,7 @@ INSTRUCTIONS: Base your answer ENTIRELY on the facts above. If the facts say som
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: selectedModel,
+        model: model,
         messages: ollamaMessages,
         stream: true,
       }),

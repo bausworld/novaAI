@@ -21,7 +21,7 @@ interface ApiUsagePanelProps {
 
 const STATUS_STYLES: Record<string, { bg: string; color: string; label: string }> = {
   active: { bg: "rgba(34,197,94,0.1)", color: "#22c55e", label: "Active" },
-  free: { bg: "var(--accent-light)", color: "var(--accent)", label: "Free" },
+  free: { bg: "rgba(34,197,94,0.1)", color: "#22c55e", label: "Active" },
   error: { bg: "rgba(239,68,68,0.08)", color: "#ef4444", label: "Issue" },
 };
 
@@ -37,6 +37,7 @@ const TYPE_ICONS: Record<string, string> = {
   "Email": "📧",
   "Documents": "📄",
   "Project Management": "📋",
+  "Social Media": "📣",
 };
 
 export function ApiUsagePanel({ open, onClose }: ApiUsagePanelProps) {
@@ -57,8 +58,10 @@ export function ApiUsagePanel({ open, onClose }: ApiUsagePanelProps) {
       .finally(() => setLoading(false));
   }, [open]);
 
-  const paidServices = services.filter((s) => s.status !== "free");
-  const freeServices = services.filter((s) => s.status === "free");
+  const paidServices = services.filter((s) => s.cost !== "Free" && !s.cost.startsWith("Free "));
+  const freeServices = services.filter((s) => s.cost === "Free" || s.cost.startsWith("Free "));
+  const activeCount = services.filter((s) => s.status === "active" || s.status === "free").length;
+  const errorCount = services.filter((s) => s.status === "error").length;
 
   return (
     <Modal open={open} onClose={onClose} maxWidth={600}>
@@ -67,7 +70,9 @@ export function ApiUsagePanel({ open, onClose }: ApiUsagePanelProps) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
           <div>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: "var(--text-primary)", margin: 0 }}>API Usage & Costs</h2>
-            <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: "4px 0 0" }}>Real-time status of all connected services.</p>
+            <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: "4px 0 0" }}>
+              {loading ? "Checking status..." : `${activeCount} active · ${errorCount} issue${errorCount !== 1 ? "s" : ""}`}
+            </p>
           </div>
           <button
             onClick={onClose}
@@ -86,11 +91,11 @@ export function ApiUsagePanel({ open, onClose }: ApiUsagePanelProps) {
           </div>
         ) : (
           <>
-            {/* Paid / Active Services */}
+            {/* Paid / API-key Services */}
             {paidServices.length > 0 && (
               <div style={{ marginBottom: 20 }}>
                 <h3 style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
-                  Paid Services
+                  API Key Services
                 </h3>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {paidServices.map((s) => (

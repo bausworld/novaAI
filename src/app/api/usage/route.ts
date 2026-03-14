@@ -6,6 +6,7 @@ const OPENAI_KEY = process.env.OPEN_API_KEY || "";
 const MAILERSEND_KEY = process.env.MAILERSEND_API_KEY || "";
 const VEO_KEY = process.env.VEO_API_KEY || "";
 const JIRA_SITE = process.env.JIRA_SITE_URL || "";
+const BUFFER_KEY = process.env.BUFFER_API_KEY || "";
 
 export async function GET() {
   const services: Array<{
@@ -186,57 +187,147 @@ export async function GET() {
     });
   }
 
-  // 5. Free services
-  services.push(
-    {
+  // 5. Free services — check connectivity live
+  // Ollama
+  const ollamaUrl = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
+  try {
+    const ollamaRes = await fetch(`${ollamaUrl}/api/tags`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (ollamaRes.ok) {
+      const ollamaData = await ollamaRes.json();
+      const modelCount = ollamaData.models?.length || 0;
+      services.push({
+        name: "Ollama",
+        type: "AI Chat",
+        status: "active",
+        cost: "Free (runs locally)",
+        limit: "Unlimited",
+        remaining: `${modelCount} model${modelCount !== 1 ? "s" : ""} loaded`,
+        note: "Running locally — using your CPU/GPU",
+      });
+    } else {
+      throw new Error("unreachable");
+    }
+  } catch {
+    const hasOpenAI = !!(process.env.OPEN_API_KEY || process.env.OPENAI_API_KEY);
+    services.push({
       name: "Ollama",
       type: "AI Chat",
-      status: "free",
+      status: "error",
       cost: "Free (runs locally)",
       limit: "Unlimited",
-      note: "Uses your Mac's CPU/GPU — no external costs",
-    },
-    {
+      note: hasOpenAI
+        ? `Not reachable at ${ollamaUrl} — Nova is using OpenAI as fallback`
+        : `Not reachable at ${ollamaUrl} — start Ollama locally to use local models`,
+    });
+  }
+
+  // Open-Meteo
+  try {
+    const meteoRes = await fetch(
+      "https://api.open-meteo.com/v1/forecast?latitude=40.71&longitude=-74.01&current_weather=true",
+      { signal: AbortSignal.timeout(5000) }
+    );
+    services.push({
       name: "Open-Meteo",
       type: "Weather",
-      status: "free",
+      status: meteoRes.ok ? "active" : "error",
       cost: "Free",
       limit: "10,000 requests/day",
-      note: "No API key required",
-    },
-    {
+      note: meteoRes.ok ? "Connected — no API key required" : `Returned ${meteoRes.status}`,
+    });
+  } catch {
+    services.push({
+      name: "Open-Meteo",
+      type: "Weather",
+      status: "error",
+      cost: "Free",
+      limit: "10,000 requests/day",
+      note: "Could not reach Open-Meteo",
+    });
+  }
+
+  // Yahoo Finance
+  try {
+    const yahooRes = await fetch(
+      "https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=1d&range=1d",
+      { signal: AbortSignal.timeout(5000) }
+    );
+    services.push({
       name: "Yahoo Finance",
       type: "Stock Data",
-      status: "free",
+      status: yahooRes.ok ? "active" : "error",
       cost: "Free",
       limit: "Undocumented",
-      note: "Unofficial API, may have soft limits",
-    },
-    {
+      note: yahooRes.ok ? "Connected — unofficial API" : `Returned ${yahooRes.status}`,
+    });
+  } catch {
+    services.push({
+      name: "Yahoo Finance",
+      type: "Stock Data",
+      status: "error",
+      cost: "Free",
+      limit: "Undocumented",
+      note: "Could not reach Yahoo Finance",
+    });
+  }
+
+  // Edge TTS — no external ping possible (local package), mark active if package present
+  try {
+    require("msedge-tts");
+    services.push({
       name: "Edge TTS",
       type: "Text-to-Speech",
-      status: "free",
+      status: "active",
       cost: "Free",
       limit: "3,000 chars per request",
-      note: "Microsoft Edge voices, no API key needed",
-    },
-    {
+      note: "Microsoft Edge voices — package installed",
+    });
+  } catch {
+    services.push({
+      name: "Edge TTS",
+      type: "Text-to-Speech",
+      status: "error",
+      cost: "Free",
+      limit: "3,000 chars per request",
+      note: "msedge-tts package not found",
+    });
+  }
+
+  // YouTube / Piped
+  try {
+    const pipedRes = await fetch("https://pipedapi.kavin.rocks/trending?region=US", {
+      signal: AbortSignal.timeout(5000),
+    });
+    services.push({
       name: "YouTube Search",
       type: "Video Search",
-      status: "free",
+      status: pipedRes.ok ? "active" : "error",
       cost: "Free",
       limit: "No hard limit",
-      note: "HTML scraping with Piped API fallback",
-    },
-    {
-      name: "Document Generator",
-      type: "Documents",
-      status: "free",
+      note: pipedRes.ok ? "Piped API reachable" : "Piped API unavailable — falling back to scraping",
+    });
+  } catch {
+    services.push({
+      name: "YouTube Search",
+      type: "Video Search",
+      status: "error",
       cost: "Free",
-      limit: "Unlimited",
-      note: "Local generation — Word, Excel, PDF via docx/exceljs/pdfkit",
-    }
-  );
+      limit: "No hard limit",
+      note: "Piped API unreachable — scraping fallback active",
+    });
+  }
+
+  // Document Generator — always local
+  services.push({
+    name: "Document Generator",
+    type: "Documents",
+    status: "active",
+    cost: "Free",
+    limit: "Unlimited",
+    note: "Local — Word, Excel, PDF via docx/exceljs/pdfkit",
+  });
 
   // 6. VEO Video Generation
   if (VEO_KEY) {
@@ -259,6 +350,63 @@ export async function GET() {
       cost: "Free (included in Jira plan)",
       limit: "Unlimited",
       note: `Connected to ${JIRA_SITE.replace("https://", "")}`,
+    });
+  }
+
+  // 8. Buffer
+  if (BUFFER_KEY) {
+    try {
+      const res = await fetch("https://api.buffer.com", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${BUFFER_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query: "query { account { id email } }" }),
+        signal: AbortSignal.timeout(8000),
+      });
+      const rateLimitRemaining = res.headers.get("RateLimit-Remaining");
+      const rateLimitLimit = res.headers.get("RateLimit-Limit");
+      if (res.ok) {
+        const data = await res.json();
+        const email = data?.data?.account?.email || "";
+        services.push({
+          name: "Buffer",
+          type: "Social Media",
+          status: "active",
+          cost: "Based on Buffer plan",
+          limit: rateLimitLimit ? `${rateLimitLimit} req/15min` : "100 req/15min (3rd party)",
+          remaining: rateLimitRemaining ? `${rateLimitRemaining} requests left` : undefined,
+          note: email ? `Connected as ${email}` : "Post & schedule to social channels",
+        });
+      } else {
+        services.push({
+          name: "Buffer",
+          type: "Social Media",
+          status: "error",
+          cost: "Based on Buffer plan",
+          limit: "N/A",
+          note: `API returned ${res.status} — check BUFFER_API_KEY`,
+        });
+      }
+    } catch {
+      services.push({
+        name: "Buffer",
+        type: "Social Media",
+        status: "error",
+        cost: "Based on Buffer plan",
+        limit: "N/A",
+        note: "Could not reach Buffer API",
+      });
+    }
+  } else {
+    services.push({
+      name: "Buffer",
+      type: "Social Media",
+      status: "error",
+      cost: "Based on Buffer plan",
+      limit: "N/A",
+      note: "No API key — add BUFFER_API_KEY to .env.local",
     });
   }
 

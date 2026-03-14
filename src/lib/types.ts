@@ -1,3 +1,31 @@
+export interface BufferPost {
+  id: string;
+  text: string;
+  channelId?: string;
+  createdAt?: string;
+}
+
+export interface BufferChannel {
+  id: string;
+  name: string;
+  displayName: string;
+  service: string;
+  avatar?: string;
+  isQueuePaused?: boolean;
+}
+
+export interface BufferResult {
+  action: string;
+  status: "success" | "error";
+  message: string;
+  post?: BufferPost;
+  channels?: BufferChannel[];
+  posts?: BufferPost[];
+  idea?: { id: string; content?: { title?: string; text?: string } };
+  draftLink?: string;
+  error?: string;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
@@ -11,6 +39,7 @@ export interface Message {
   jiraResult?: JiraResult;
   generatedVideo?: GeneratedVideo;
   savedRecipe?: SavedRecipe;
+  bufferResult?: BufferResult;
   isStreaming?: boolean;
   recipeOptions?: any[];
 }

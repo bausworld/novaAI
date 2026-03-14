@@ -1,12 +1,13 @@
 import { useCallback, useRef, useState } from "react";
 import { useChatStore } from "@/stores/chat-store";
-import { Message, Source, VideoResult, EmailDraft, GeneratedDoc, JiraResult, GeneratedVideo, SavedRecipe } from "@/lib/types";
+import { Message, Source, VideoResult, EmailDraft, GeneratedDoc, JiraResult, GeneratedVideo, SavedRecipe, BufferResult } from "@/lib/types";
+import { parseMediaContext } from "@/components/chat/ChatInput";
 
 function generateId() {
   return Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
 }
 
-function detectIntent(content: string): { wantsSearch: boolean; wantsVideo: boolean; wantsImage: boolean; wantsEmail: boolean; wantsDoc: boolean; wantsJira: boolean; wantsVideoGen: boolean; wantsRecipe: boolean; docType: "docx" | "xlsx" | "pdf"; searchQuery: string; imagePrompt: string; emailTo: string; videoGenPrompt: string; recipeQuery: string } {
+function detectIntent(content: string): { wantsSearch: boolean; wantsVideo: boolean; wantsImage: boolean; wantsEmail: boolean; wantsDoc: boolean; wantsJira: boolean; wantsVideoGen: boolean; wantsRecipe: boolean; wantsBuffer: boolean; wantsImageDraft: boolean; wantsVideoDraft: boolean; bufferAction: string; bufferText: string; bufferInstagramType: string; docType: "docx" | "xlsx" | "pdf"; searchQuery: string; imagePrompt: string; emailTo: string; videoGenPrompt: string; recipeQuery: string } {
   const lower = content.toLowerCase();
 
   // Recipe detection: "add a recipe for X", "save recipe X", "new recipe X"
@@ -20,8 +21,15 @@ function detectIntent(content: string): { wantsSearch: boolean; wantsVideo: bool
     .trim();
   if (!recipeQuery || recipeQuery.length < 2) recipeQuery = content;
 
-  const wantsImage = !wantsRecipe && /\b(generate|create|make|draw|paint|design|render|imagine)\b.*\b(image|picture|photo|art|illustration|icon|logo|portrait|scene|poster)\b/i.test(lower)
-    || /\b(image|picture|photo|art|illustration)\b.*\b(of|showing|with|featuring)\b/i.test(lower);
+  const wantsImage = !wantsRecipe && (
+    /\b(generate|create|make|draw|paint|design|render|imagine)\b.*\b(image|picture|photo|art|illustration|icon|logo|portrait|scene|poster)\b/i.test(lower)
+    || /\b(image|picture|photo|art|illustration)\b.*\b(of|showing|with|featuring)\b/i.test(lower)
+  );
+
+  // "Generate an image ... for social media / with hashtags / and draft / for Buffer"
+  const wantsImageDraft = wantsImage && (
+    /\b(social\s*media|hashtag|buffer|draft|instagram|facebook|twitter)\b/i.test(lower)
+  );
 
   // VEO video generation detection
   const wantsVideoGen = !wantsRecipe && !wantsImage && (
@@ -30,8 +38,36 @@ function detectIntent(content: string): { wantsSearch: boolean; wantsVideo: bool
     || /\bveo\b/i.test(lower)
   );
 
+  // "Generate a video ... for social media / buffer draft / reel / story"
+  const wantsVideoDraft = wantsVideoGen && (
+    /\b(social\s*media|hashtag|buffer|draft|instagram|facebook|twitter|reel|story)\b/i.test(lower)
+  );
+
+  // Buffer detection: post to social media via Buffer
+  const wantsBuffer = !wantsRecipe && !wantsImage && !wantsVideoGen && (
+    /\b(post|schedule|publish|share|tweet|buffer)\b.*\b(buffer|social|twitter|instagram|facebook|linkedin|tiktok|mastodon)\b/i.test(lower)
+    || /\b(buffer)\b.*\b(post|schedule|publish|share|tweet|idea|channel)\b/i.test(lower)
+    || /\b(schedule|post|publish)\b.*\b(social\s*media|post)\b/i.test(lower)
+  );
+
+  // Extract buffer text (the post copy)
+  const bufferText = content
+    .replace(/^(post|schedule|publish|share|tweet|buffer)\s+(to\s+)?(buffer|social\s*media|twitter|instagram|facebook|linkedin|tiktok)?\s*/i, "")
+    .replace(/^(an?\s+)?/i, "")
+    .trim() || content;
+
+  // Instagram post type from message keywords
+  const bufferInstagramType = /\breel\b/i.test(lower) ? "reel"
+    : /\bstory\b/i.test(lower) ? "story"
+    : "post";
+
+  const bufferAction = /\b(idea)\b/i.test(lower) ? "createIdea"
+    : /\b(image|photo|picture)\b/i.test(lower) ? "createImagePost"
+    : /\b(video|reel|clip)\b/i.test(lower) ? "createVideoPost"
+    : "createTextPost";
+
   // Jira detection: create, move, delete issues
-  const wantsJira = !wantsRecipe && !wantsImage && !wantsVideoGen && (
+  const wantsJira = !wantsRecipe && !wantsImage && !wantsVideoGen && !wantsBuffer && (
     /\b(create|make|add|open|file|log|submit)\b.*\b(jira|ticket|epic|story|subtask)\b/i.test(lower)
     || /\bjira\b.*\b(create|make|add|ticket|epic|story|subtask|issue|task|bug|move|put|remove|delete)\b/i.test(lower)
     || /\b(move|put)\b.*\b(CEO-\d+|issue|ticket|story)\b.*\b(sprint|backlog)\b/i.test(lower)
@@ -40,7 +76,7 @@ function detectIntent(content: string): { wantsSearch: boolean; wantsVideo: bool
   );
 
   // Email detection: "send an email to X", "email X about Y", "write an email to X"
-  const wantsEmail = !wantsImage && !wantsVideoGen && !wantsJira && (/\b(send|write|draft|compose|create)\b.*\b(email|e-mail|mail)\b/i.test(lower)
+  const wantsEmail = !wantsImage && !wantsVideoGen && !wantsJira && !wantsBuffer && (/\b(send|write|draft|compose|create)\b.*\b(email|e-mail|mail)\b/i.test(lower)
     || /\bemail\b.*\b(to|about|regarding)\b/i.test(lower));
 
   // Document detection: "create a report", "generate a spreadsheet", "make a PDF"
@@ -91,7 +127,7 @@ function detectIntent(content: string): { wantsSearch: boolean; wantsVideo: bool
     .replace(/^(an?\s+)?(video|clip|footage|animation)\s+(of\s+)?(about\s+)?/i, "")
     .trim();
 
-  return { wantsSearch, wantsVideo, wantsImage, wantsEmail, wantsDoc, wantsJira, wantsVideoGen, wantsRecipe, docType, searchQuery: searchQuery || content, imagePrompt: imagePrompt || content, emailTo, videoGenPrompt: videoGenPrompt || content, recipeQuery };
+  return { wantsSearch, wantsVideo, wantsImage, wantsEmail, wantsDoc, wantsJira, wantsVideoGen, wantsRecipe, wantsBuffer, wantsImageDraft, wantsVideoDraft, bufferAction, bufferText, bufferInstagramType, docType, searchQuery: searchQuery || content, imagePrompt: imagePrompt || content, emailTo, videoGenPrompt: videoGenPrompt || content, recipeQuery };
 }
 
 export function useChat() {
@@ -143,7 +179,7 @@ export function useChat() {
       })) ?? [];
 
       // Detect if user wants search, video, image, email, or document
-      const { wantsSearch, wantsVideo, wantsImage, wantsEmail, wantsDoc, wantsJira, wantsVideoGen, wantsRecipe, docType, searchQuery, imagePrompt, emailTo, videoGenPrompt, recipeQuery } = detectIntent(content);
+      const { wantsSearch, wantsVideo, wantsImage, wantsEmail, wantsDoc, wantsJira, wantsVideoGen, wantsRecipe, wantsBuffer, wantsImageDraft, wantsVideoDraft, bufferAction, bufferText, bufferInstagramType, docType, searchQuery, imagePrompt, emailTo, videoGenPrompt, recipeQuery } = detectIntent(content);
 
       // RAG: Run search/video BEFORE the LLM so we can inject results into context
       let searchResults: Source[] = [];
@@ -210,8 +246,95 @@ export function useChat() {
       }
 
       // For image-only requests, skip the LLM call — just show the image
+      // If wantsImageDraft: also upload to Supabase + save as Buffer idea
       if (wantsImage && generatedImage) {
-        updateMessage(convId!, assistantId, { content: "", isStreaming: false });
+        if (wantsImageDraft) {
+          updateMessage(convId!, assistantId, {
+            content: "Image generated — uploading and saving Buffer draft…",
+            generatedImage,
+            isStreaming: true,
+          });
+          try {
+            // 1. Upload the base64 image to Supabase
+            const uploadRes = await fetch("/api/upload", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ dataUrl: generatedImage, fileName: "social-image.png" }),
+            });
+            const uploadData = await uploadRes.json();
+            if (!uploadRes.ok || !uploadData.url) throw new Error(uploadData.error ?? "Upload failed");
+            const imageUrl = uploadData.url;
+
+            // 2. Fetch org
+            const orgRes = await fetch("/api/buffer", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "getOrganizations" }),
+            });
+            const orgData = await orgRes.json();
+            const orgId: string = orgData.data?.account?.organizations?.[0]?.id ?? "";
+            if (!orgId) throw new Error("No Buffer organization found");
+
+            // 3. Extract hashtags from the prompt, generate 5 if not specified
+            const hashtagMatch = content.match(/#\w+/g);
+            let hashtags: string[];
+            if (hashtagMatch && hashtagMatch.length >= 3) {
+              hashtags = hashtagMatch.slice(0, 5);
+            } else {
+              // Derive from prompt topic
+              const topicWords = imagePrompt
+                .toLowerCase()
+                .replace(/[^a-z\s]/g, "")
+                .split(/\s+/)
+                .filter(w => w.length > 3)
+                .slice(0, 3);
+              const genHashtags = topicWords.map(w => `#${w}`);
+              // Add social media defaults based on topic
+              const isFoodRelated = /food|eat|cook|recipe|meal|dish|cuisine|chef|restaurant|delicious|tasty|yummy/i.test(imagePrompt);
+              if (isFoodRelated) {
+                hashtags = [...new Set([...genHashtags, "#foodie", "#foodphotography", "#instafood", "#yummy", "#delicious"])].slice(0, 5);
+              } else {
+                hashtags = [...new Set([...genHashtags, "#trending", "#socialmedia"])].slice(0, 5);
+              }
+            }
+            const caption = `${hashtags.join(" ")}\n\n📸 ${imageUrl}`;
+
+            // 4. Save as Buffer idea (with image URL in the body)
+            const ideaRes = await fetch("/api/buffer", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "createIdea",
+                organizationId: orgId,
+                title: hashtags.slice(0, 3).join(" "),
+                text: caption,
+              }),
+            });
+            const ideaData = await ideaRes.json();
+            const ideaId: string = ideaData.data?.createIdea?.id ?? "";
+            const draftLink = "https://publish.buffer.com/ideas";
+
+            updateMessage(convId!, assistantId, {
+              content: "",
+              generatedImage,
+              bufferResult: {
+                action: "createIdea",
+                status: "success",
+                message: `Image saved to Buffer drafts with hashtags:\n\n${hashtags.join("  ")}\n\n[Open in Buffer →](${draftLink})`,
+                idea: ideaData.data?.createIdea,
+              },
+              isStreaming: false,
+            });
+          } catch (err) {
+            updateMessage(convId!, assistantId, {
+              content: `Image generated but draft failed: ${err instanceof Error ? err.message : "unknown error"}`,
+              generatedImage,
+              isStreaming: false,
+            });
+          }
+        } else {
+          updateMessage(convId!, assistantId, { content: "", isStreaming: false });
+        }
         setIsStreaming(false);
         return;
       }
@@ -222,9 +345,11 @@ export function useChat() {
           const model = "veo-3.1-generate-preview";
           const aspectRatio = /\b(9:16|portrait|vertical|tall)\b/i.test(content) ? "9:16" : "16:9";
           const resolution = /\b4k\b/i.test(content) ? "4k" : /\b1080p?\b/i.test(content) ? "1080p" : "720p";
-          const durationSeconds = /\b4\s*s(ec)?\b/i.test(content) ? 4 : /\b6\s*s(ec)?\b/i.test(content) ? 6 : 8;
+          // Map user-facing durations (2/5/8) to Veo 3.1 supported values (4/6/8)
+          const storeDuration = useChatStore.getState().videoDuration ?? 8;
+          const mappedDuration = storeDuration === 2 ? 4 : storeDuration === 5 ? 6 : 8;
           // If 1080p or 4k, duration must be 8
-          const finalDuration = (resolution === "1080p" || resolution === "4k") ? 8 : durationSeconds;
+          const finalDuration = (resolution === "1080p" || resolution === "4k") ? 8 : mappedDuration;
           const negativeMatch = content.match(/negative\s*(?:prompt)?[:\s]+(.+?)(?:\.|$)/i);
           const negativePrompt = negativeMatch ? negativeMatch[1].trim() : undefined;
 
@@ -332,6 +457,77 @@ export function useChat() {
             content: `Your video is ready! Generated in ${Math.round((Date.now() - genVideo.startedAt) / 1000)}s.`,
             generatedVideo: { ...genVideo, status: "ready", videoUrl },
           });
+
+          // If wantsVideoDraft: upload video to Supabase + save as Buffer idea
+          if (wantsVideoDraft) {
+            updateMessage(convId!, assistantId, {
+              content: "Video ready — uploading and saving Buffer draft…",
+              generatedVideo: { ...genVideo, status: "ready", videoUrl },
+            });
+            try {
+              // 1. Upload video file to Supabase via FormData
+              const formData = new FormData();
+              formData.append("file", videoBlob, "social-video.mp4");
+              const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+              const uploadData = await uploadRes.json();
+              if (!uploadRes.ok || !uploadData.url) throw new Error(uploadData.error ?? "Upload failed");
+              const videoFileUrl = uploadData.url;
+
+              // 2. Fetch Buffer org
+              const orgRes = await fetch("/api/buffer", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "getOrganizations" }),
+              });
+              const orgData = await orgRes.json();
+              const orgId: string = orgData.data?.account?.organizations?.[0]?.id ?? "";
+              if (!orgId) throw new Error("No Buffer organization found");
+
+              // 3. Build hashtags from prompt
+              const isFoodRelated = /food|eat|cook|recipe|meal|dish|cuisine|chef|restaurant|delicious|tasty|yummy/i.test(videoGenPrompt);
+              const topicWords = videoGenPrompt
+                .toLowerCase()
+                .replace(/[^a-z\s]/g, "")
+                .split(/\s+/)
+                .filter((w: string) => w.length > 3)
+                .slice(0, 3);
+              const genHashtags = topicWords.map((w: string) => `#${w}`);
+              const hashtags: string[] = isFoodRelated
+                ? [...new Set([...genHashtags, "#foodvideo", "#reels", "#foodie", "#chef", "#cooking"])].slice(0, 5)
+                : [...new Set([...genHashtags, "#video", "#reels", "#trending"])].slice(0, 5);
+              const caption = `${hashtags.join(" ")}\n\n🎬 ${videoFileUrl}`;
+
+              // 4. Save as Buffer idea with video URL in body
+              const ideaRes = await fetch("/api/buffer", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  action: "createIdea",
+                  organizationId: orgId,
+                  title: hashtags.slice(0, 3).join(" "),
+                  text: caption,
+                }),
+              });
+              const ideaData = await ideaRes.json();
+
+              updateMessage(convId!, assistantId, {
+                content: "",
+                generatedVideo: { ...genVideo, status: "ready", videoUrl },
+                bufferResult: {
+                  action: "createIdea",
+                  status: "success",
+                  message: `Video saved to Buffer drafts with hashtags:\n\n${hashtags.join("  ")}\n\n[Open in Buffer →](https://publish.buffer.com/ideas)`,
+                  idea: ideaData.data?.createIdea,
+                  draftLink: "https://publish.buffer.com/ideas",
+                },
+              });
+            } catch (err) {
+              updateMessage(convId!, assistantId, {
+                content: `Video ready but draft failed: ${err instanceof Error ? err.message : "unknown error"}`,
+                generatedVideo: { ...genVideo, status: "ready", videoUrl },
+              });
+            }
+          }
         } catch (err) {
           updateMessage(convId!, assistantId, {
             content: `Sorry, video generation failed. ${err instanceof Error ? err.message : ""}`,
@@ -835,6 +1031,179 @@ RULES:
         } catch (err) {
           updateMessage(convId!, assistantId, {
             content: `Sorry, I had trouble creating the Jira issue. ${err instanceof Error ? err.message : ""}`,
+            isStreaming: false,
+          });
+        } finally {
+          setIsStreaming(false);
+        }
+        return;
+      }
+
+      // For Buffer social media requests
+      if (wantsBuffer) {
+        try {
+          // Step 1: fetch org ID
+          const orgRes = await fetch("/api/buffer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "getOrganizations" }),
+          });
+          const orgData = await orgRes.json();
+          const orgId: string = orgData.data?.account?.organizations?.[0]?.id || "";
+
+          if (!orgId) {
+            updateMessage(convId!, assistantId, {
+              content: "Buffer error: Could not retrieve your organization. Check your BUFFER_API_KEY.",
+              isStreaming: false,
+            });
+            setIsStreaming(false);
+            return;
+          }
+
+          // Step 2: fetch channels using the org ID
+          const chRes = await fetch("/api/buffer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "getChannels", organizationId: orgId }),
+          });
+          const chData = await chRes.json();
+          const channels: Array<{ id: string; displayName: string; service: string }> =
+            chData.data?.channels || [];
+
+          // Pick a channel: prefer one matching a service keyword in the message, else first
+          const lower2 = content.toLowerCase();
+          const matchedChannel = channels.find(c =>
+            lower2.includes(c.service?.toLowerCase() || "") ||
+            lower2.includes((c.displayName || "").toLowerCase())
+          ) || channels[0];
+
+          const channelId = matchedChannel?.id || "";
+
+          // Instagram doesn't support text-only posts — save as idea instead
+          const isInstagram = matchedChannel?.service?.toLowerCase() === "instagram";
+
+          // Detect uploaded media from context
+          const uploadedContext = useChatStore.getState().uploadedContext;
+          const mediaItem = uploadedContext.map(f => ({ f, media: parseMediaContext(f.content) }))
+            .find(({ media }) => media !== null);
+          const uploadedMedia = mediaItem?.media ?? null;
+
+          // Determine effective action:
+          // 1. Uploaded video → createVideoPost
+          // 2. Uploaded image → createImagePost
+          // 3. Detected "video/reel/clip" → createVideoPost (but needs media — fall to idea)
+          // 4. Detected "image/photo" → createImagePost (but needs media — fall to idea)
+          // 5. Instagram + text only → createIdea
+          // 6. Otherwise → createTextPost
+          let resolvedAction = bufferAction;
+          if (uploadedMedia?.kind === "video") resolvedAction = "createVideoPost";
+          else if (uploadedMedia?.kind === "image") resolvedAction = "createImagePost";
+          else if ((bufferAction === "createVideoPost" || bufferAction === "createImagePost") && !uploadedMedia) {
+            // User said "post a video/image" but didn't attach one
+            resolvedAction = "createIdea";
+          } else if (bufferAction === "createTextPost" && isInstagram) {
+            resolvedAction = "createIdea";
+          }
+
+          let bufferRes, bufferData;
+
+          if (resolvedAction === "createIdea") {
+            const ideaText = uploadedMedia
+              ? `${bufferText}\n\n[Attached ${uploadedMedia.kind}: ${uploadedMedia.url}]`
+              : bufferText;
+            bufferRes = await fetch("/api/buffer", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "createIdea", organizationId: orgId, title: ideaText.slice(0, 80), text: ideaText }),
+            });
+            bufferData = await bufferRes.json();
+          } else if (resolvedAction === "createImagePost") {
+            bufferRes = await fetch("/api/buffer", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "createImagePost",
+                channelId,
+                text: bufferText,
+                imageUrl: uploadedMedia!.url,
+                type: isInstagram ? bufferInstagramType : undefined,
+              }),
+            });
+            bufferData = await bufferRes.json();
+          } else if (resolvedAction === "createVideoPost") {
+            bufferRes = await fetch("/api/buffer", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "createVideoPost",
+                channelId,
+                text: bufferText,
+                videoUrl: uploadedMedia!.url,
+                type: isInstagram ? bufferInstagramType : undefined,
+              }),
+            });
+            bufferData = await bufferRes.json();
+          } else {
+            if (!channelId) {
+              updateMessage(convId!, assistantId, {
+                content: "Buffer error: No channels found in your Buffer account.",
+                isStreaming: false,
+              });
+              setIsStreaming(false);
+              return;
+            }
+            bufferRes = await fetch("/api/buffer", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: resolvedAction, channelId, text: bufferText }),
+            });
+            bufferData = await bufferRes.json();
+          }
+
+          if (bufferData.success) {
+            const post = bufferData.data?.createPost?.post || bufferData.data?.createIdea;
+
+            // Clear the uploaded media file from context now that it's been posted
+            if (uploadedMedia) {
+              useChatStore.getState().removeUploadedContext(mediaItem!.f.name);
+            }
+
+            const mediaNeededMsg = (bufferAction === "createVideoPost" || bufferAction === "createImagePost") && !uploadedMedia
+              ? ` (saved as idea — attach a ${bufferAction === "createVideoPost" ? "video" : "photo"} to post it)`
+              : "";
+
+            const result: BufferResult = {
+              action: resolvedAction,
+              status: "success",
+              message: resolvedAction === "createIdea"
+                ? isInstagram && !uploadedMedia
+                  ? `Saved as a Buffer idea (Instagram requires an image/video — attach one and say "post this to Instagram" to schedule it).`
+                  : `Idea saved to Buffer!${mediaNeededMsg}`
+                : `${resolvedAction === "createVideoPost" ? "Video" : resolvedAction === "createImagePost" ? "Image" : "Post"} scheduled on **${matchedChannel?.displayName || "Buffer"}** (${matchedChannel?.service || "social"}${isInstagram ? ` · ${bufferInstagramType}` : ""}).`,
+              post: post ? { id: post.id, text: post.text || bufferText } : undefined,
+              idea: bufferData.data?.createIdea || undefined,
+            };
+            updateMessage(convId!, assistantId, {
+              content: result.message,
+              bufferResult: result,
+              isStreaming: false,
+            });
+          } else {
+            const result: BufferResult = {
+              action: resolvedAction,
+              status: "error",
+              message: `Buffer error: ${bufferData.error || "Unknown error"}`,
+              error: bufferData.error,
+            };
+            updateMessage(convId!, assistantId, {
+              content: result.message,
+              bufferResult: result,
+              isStreaming: false,
+            });
+          }
+        } catch (err) {
+          updateMessage(convId!, assistantId, {
+            content: `Sorry, Buffer post failed. ${err instanceof Error ? err.message : ""}`,
             isStreaming: false,
           });
         } finally {

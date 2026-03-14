@@ -154,6 +154,7 @@ p code, li code {
 
 /* ── Input Bar ── */
 .nova-input-bar {
+  position: relative;
   background: var(--surface-tertiary);
   border: 1.5px solid var(--border-strong);
   border-radius: 24px;
